@@ -1,0 +1,14 @@
+.token
+.credentials
+cdm/
+__pycache__/
+*.pyc
+temp_*/
+enc_*.mp4
+dec_*.mp4
+*.m4s
+*.mp4
+logs/
+watcher_config.json
+watcher_state.json
+.env

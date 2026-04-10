@@ -1,0 +1,29 @@
+{
+  "check_interval_minutes": 60,
+  "quality": 1080,
+  "keep_downloads": false,
+  "download_dir": "/tmp/lemino_downloads",
+
+  "shows": [
+    {
+      "name": "そこ曲がったら櫻坂",
+      "init_crid": "crid://plala.iptvf.jp/vod/0000000000_00mm8i4x3s",
+      "quality": 1080
+    },
+    {
+      "name": "ちょこさく",
+      "init_crid": "crid://plala.iptvf.jp/vod/0000000000_00mm8ihrno",
+      "quality": 1080
+    }
+  ],
+
+  "alist_url": "http://localhost:5244",
+  "alist_username": "srzwyuu",
+  "alist_password": "YOUR_ALIST_PASSWORD",
+  "alist_public_url": "https://alist.46log.com",
+  "alist_upload_base": "/lemino",
+
+  "napcat_http_url": "http://localhost:3002",
+  "napcat_http_token": "YOUR_NAPCAT_TOKEN",
+  "push_group_ids": ["GROUP_ID"]
+}
