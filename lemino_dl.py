@@ -100,7 +100,7 @@ def resolve_crid_to_cid(crid: str, token: str) -> str:
         data = resp.json()
         if data.get("result") == "0":
             for meta in data.get("meta_list", []):
-                for co in meta.get("cid_obj", []):
+                for co in (meta.get("cid_obj") or []):
                     if co.get("cid"):
                         print(f"    Title: {meta.get('title', '?')}")
                         return co["cid"]
@@ -536,6 +536,12 @@ def main():
         # If URL contained a base64 crid, resolve CID from it
         crid = args.crid or url_crid
         if crid and not cid:
+            if "/group/" in crid:
+                print(f"[!] URL 解析出的是系列 group CRID，不是单集 VOD CRID:")
+                print(f"    {crid}")
+                print(f"[!] 请在 Lemino 网站点进具体某一集，复制那一集的 URL 重试。")
+                print(f"    (系列首页 URL 包含的是 group CRID，无法直接下载)")
+                sys.exit(1)
             print(f"[1/5] Resolving CID from CRID...")
             print(f"    CRID: {crid}")
             cid = resolve_crid_to_cid(crid, token)
