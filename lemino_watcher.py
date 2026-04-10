@@ -587,11 +587,32 @@ def main():
 
     # 守护模式
     interval = args.interval or config.get("check_interval_minutes", 60)
+    check_at_minute = config.get("check_at_minute", None)  # e.g. 20 → run at XX:20 each hour
     log.info(f"{'='*50}")
     log.info(f"  Lemino Watcher 守護モード")
-    log.info(f"  チェック間隔: {interval} 分")
+    if check_at_minute is not None:
+        log.info(f"  チェック時刻: 毎時 {check_at_minute:02d}分")
+    else:
+        log.info(f"  チェック間隔: {interval} 分")
     log.info(f"  番組数: {len(config.get('shows', []))}")
     log.info(f"{'='*50}")
+
+    from datetime import timedelta
+
+    def sleep_until_next_trigger():
+        """Sleep until next check_at_minute mark of the hour, or interval minutes."""
+        if check_at_minute is not None:
+            now = datetime.now()
+            # Next occurrence of :MM
+            next_run = now.replace(second=0, microsecond=0, minute=check_at_minute)
+            if now.minute > check_at_minute or (now.minute == check_at_minute and now.second > 0):
+                next_run += timedelta(hours=1)
+            wait_secs = max(1, (next_run - now).total_seconds())
+            log.info(f"次回チェック: {next_run.strftime('%H:%M')} ({int(wait_secs // 60)}分{int(wait_secs % 60)}秒後)")
+            time.sleep(wait_secs)
+        else:
+            log.info(f"次回チェック: {interval} 分後")
+            time.sleep(interval * 60)
 
     while True:
         try:
@@ -599,8 +620,7 @@ def main():
         except Exception as e:
             log.error(f"检查异常: {e}", exc_info=True)
 
-        log.info(f"次回チェック: {interval} 分後")
-        time.sleep(interval * 60)
+        sleep_until_next_trigger()
 
 
 if __name__ == "__main__":

@@ -107,6 +107,42 @@ def resolve_crid_to_cid(crid: str, token: str) -> str:
     return None
 
 
+# ─── Thumbnail ─────────────────────────────────────────────
+
+IMAGE_BASE = "https://lemino.docomo.ne.jp"
+
+def fetch_thumbnail(vod_crid: str, token: str, output_path: Path, prefer: str = "width") -> bool:
+    """Download episode thumbnail (width=landscape, height=portrait) to output_path.
+    Returns True on success.
+    """
+    try:
+        from urllib.parse import quote as _quote
+        resp = requests.get(
+            f"{LEMINO_API_META_CONTENTS}?crid={_quote(vod_crid)}",
+            headers={**HEADERS, "x-service-token": token, "x-trace-id": str(uuid.uuid4())},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        if data.get("result") != "0" or not data.get("meta_list"):
+            return False
+        image_list = data["meta_list"][0].get("image_list") or {}
+        # prefer landscape (width), fall back to portrait (height)
+        for key in ([prefer, "width", "height"] if prefer else ["width", "height"]):
+            obj = image_list.get(key) or {}
+            imgs = obj.get("image_list_obj") or []
+            if imgs and imgs[0].get("url"):
+                img_url = IMAGE_BASE + imgs[0]["url"]
+                img_resp = requests.get(img_url, headers=HEADERS, timeout=15)
+                if img_resp.status_code == 200:
+                    output_path.write_bytes(img_resp.content)
+                    return True
+    except Exception as e:
+        print(f"    [thumbnail] {e}")
+    return False
+
+
 # ─── Token management ──────────────────────────────────────
 
 def save_token(token: str):
@@ -668,6 +704,17 @@ def main():
         mux_output(dec_video, dec_audio, output_file)
 
         print(f"\n=== DONE: {output_file} ({output_file.stat().st_size / 1024 / 1024:.1f} MB) ===")
+
+        # Download thumbnail
+        vod_crid_for_thumb = locals().get('crid')
+        if token and vod_crid_for_thumb and "/vod/" in str(vod_crid_for_thumb):
+            thumb_path = output_file.with_suffix(".jpg")
+            print(f"[+] Downloading thumbnail → {thumb_path.name}")
+            ok = fetch_thumbnail(vod_crid_for_thumb, token, thumb_path)
+            if ok:
+                print(f"    Saved: {thumb_path.stat().st_size // 1024} KB")
+            else:
+                print(f"    [!] Thumbnail download failed (non-fatal)")
 
     finally:
         if not args.keep_temp:
