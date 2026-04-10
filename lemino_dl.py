@@ -324,48 +324,103 @@ def get_playback_info(cid: str, token: str, crid: str = None, group_crid: str = 
         else:
             print(f"    No crid found, using None (provide --crid manually)")
 
-    payload = {
-        "inflow_flows": [None, group_crid],
-        "play_type": 1,
-        "key_download_only": None,
-        "avail_status": "1",
-        "content_list": [
-            {
+    def _make_payload(lid):
+        return {
+            "inflow_flows": [None, group_crid],
+            "play_type": 1,
+            "key_download_only": None,
+            "avail_status": "1",
+            "content_list": [{
                 "kind": "main",
                 "service_id": None,
                 "cid": cid,
-                "lid": "000000svod",
+                "lid": lid,
                 "crid": crid,
                 "preview": 0,
                 "trailer": 0,
                 "auto_play": 0,
                 "stop_position": 0,
-            }
-        ],
-        "groupcast": None,
-        "quality": None,
-        "terminal_type": 3,
-        "test_account": 0,
-    }
-    resp = requests.post(
-        LEMINO_API_WATCH,
-        json=payload,
-        headers={
-            **HEADERS,
-            "Content-Type": "application/json",
-            "x-service-token": token,
-            "x-trace-id": str(uuid.uuid4()),
-        },
-    )
+            }],
+            "groupcast": None,
+            "quality": None,
+            "terminal_type": 3,
+            "test_account": 0,
+        }
 
-    # Auto-refresh token from response
+    def _try_watch(lid):
+        return requests.post(
+            LEMINO_API_WATCH,
+            json=_make_payload(lid),
+            headers={
+                **HEADERS,
+                "Content-Type": "application/json",
+                "x-service-token": token,
+                "x-trace-id": str(uuid.uuid4()),
+            },
+        )
+
+    def _get_active_lids():
+        """Fetch license_list from meta/contents, return currently valid lid strings."""
+        if not crid:
+            return []
+        try:
+            from urllib.parse import quote as _q
+            from datetime import datetime, timezone
+            r = requests.get(
+                f"{LEMINO_API_META_CONTENTS}?crid={_q(crid)}",
+                headers={**HEADERS, "x-service-token": token, "x-trace-id": str(uuid.uuid4())},
+                timeout=10,
+            )
+            if r.status_code != 200:
+                return []
+            meta_list = r.json().get("meta_list") or []
+            if not meta_list:
+                return []
+            lids = []
+            for lic in (meta_list[0].get("license_list") or []):
+                lid_val = lic.get("license_id")
+                if not lid_val:
+                    continue
+                try:
+                    start = datetime.fromisoformat(lic["valid_start_date"].replace("Z", "+00:00"))
+                    end   = datetime.fromisoformat(lic["valid_end_date"].replace("Z", "+00:00"))
+                    now   = datetime.now(start.tzinfo)
+                    if start <= now <= end:
+                        lids.append(lid_val)
+                except Exception:
+                    lids.append(lid_val)
+            return lids
+        except Exception:
+            return []
+
+    resp = _try_watch("000000svod")
     refresh_token_from_response(resp, token)
+
+    # DELW000016 = sale type mismatch (e.g. content in AVOD free period)
+    # Auto-fallback: try every active lid from the license_list
+    if resp.status_code == 400 and "DELW000016" in resp.text:
+        print(f"    [!] sale type error with 000000svod, fetching active lids from meta...")
+        active_lids = _get_active_lids()
+        print(f"    Active lids: {active_lids}")
+        fallback_ok = False
+        for alt_lid in active_lids:
+            if alt_lid == "000000svod":
+                continue
+            print(f"    Retrying with lid={alt_lid}")
+            resp = _try_watch(alt_lid)
+            refresh_token_from_response(resp, token)
+            if resp.status_code == 200 and resp.json().get("result") == "0":
+                print(f"    OK with lid={alt_lid}")
+                fallback_ok = True
+                break
+        if not fallback_ok and (resp.status_code != 200 or resp.json().get("result") != "0"):
+            print(f"[!] All lids failed. Last response: {resp.text[:300]}")
+            sys.exit(1)
 
     if resp.status_code != 200:
         print(f"[!] API error {resp.status_code}: {resp.text[:300]}")
         print(f"[!] Token may have expired. Re-run with --token <new_token>")
-        print(f"    Get token: browser Console → localStorage.getItem('x-service-token')")
-        # Clear stale token
+        print(f"    Get token: browser Console \u2192 localStorage.getItem('x-service-token')")
         if TOKEN_FILE.exists():
             TOKEN_FILE.unlink()
         sys.exit(1)
