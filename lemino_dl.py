@@ -228,6 +228,53 @@ def _find_vod_crid_in_group(group_crid: str, cid: str, headers: dict) -> str:
     return None
 
 
+def get_episodes_from_group(group_crid: str, token: str) -> list:
+    """Fetch all episodes from a season group CRID using meta/member API.
+    Returns list of {title, cid, vod_crid} dicts (oldest → newest order).
+    Uses regex on raw response text since meta_list structure varies.
+    """
+    headers = {**HEADERS, "x-service-token": token, "x-trace-id": str(uuid.uuid4())}
+    try:
+        resp = requests.get(
+            f"{LEMINO_API_BASE}/v1/meta/member?parent_filter="
+            + requests.utils.quote(json.dumps({"crid": [group_crid]})),
+            headers=headers, timeout=15,
+        )
+        if resp.status_code != 200:
+            print(f"    [!] meta/member API error {resp.status_code}")
+            return []
+        data = resp.json()
+        if data.get("result") != "0":
+            return []
+
+        text = resp.text
+        # Find all VOD CRIDs in the full response text
+        vod_crids = re.findall(r'crid://plala\.iptvf\.jp/vod/[^"\\]+', text)
+        if not vod_crids:
+            return []
+
+        episodes = []
+        seen_crids = set()
+        for vod_crid in vod_crids:
+            if vod_crid in seen_crids:
+                continue
+            seen_crids.add(vod_crid)
+            idx = text.find(vod_crid)
+            region = text[max(0, idx - 800):idx + 800]
+            cid_m = re.search(r'"cid"\s*:\s*"([a-z0-9]{10,})"', region)
+            title_m = re.search(r'"title"\s*:\s*"([^"]+)"', region)
+            if cid_m:
+                episodes.append({
+                    "title": title_m.group(1) if title_m else "?",
+                    "cid": cid_m.group(1),
+                    "vod_crid": vod_crid,
+                })
+        return episodes
+    except Exception as e:
+        print(f"    [!] get_episodes_from_group error: {e}")
+        return []
+
+
 def get_playback_info(cid: str, token: str, crid: str = None, group_crid: str = None) -> dict:
     """Call Lemino watch/ready API to get MPD URL, license URL, custom_data."""
     if not crid:
@@ -537,14 +584,24 @@ def main():
         crid = args.crid or url_crid
         if crid and not cid:
             if "/group/" in crid:
-                print(f"[!] URL 解析出的是系列 group CRID，不是单集 VOD CRID:")
-                print(f"    {crid}")
-                print(f"[!] 请在 Lemino 网站点进具体某一集，复制那一集的 URL 重试。")
-                print(f"    (系列首页 URL 包含的是 group CRID，无法直接下载)")
-                sys.exit(1)
-            print(f"[1/5] Resolving CID from CRID...")
-            print(f"    CRID: {crid}")
-            cid = resolve_crid_to_cid(crid, token)
+                url_group_crid = crid
+                print(f"[1/5] Group CRID detected, fetching episode list...")
+                print(f"    {url_group_crid}")
+                episodes = get_episodes_from_group(url_group_crid, token)
+                if not episodes:
+                    print(f"[!] 无法从 group CRID 获取集数列表，请提供具体单集 URL")
+                    sys.exit(1)
+                ep = episodes[-1]  # latest
+                print(f"    Found {len(episodes)} episodes, selecting latest:")
+                print(f"    → {ep['title']}")
+                cid = ep["cid"]
+                crid = ep["vod_crid"]
+                if not args.group_crid:
+                    args.group_crid = url_group_crid
+            else:
+                print(f"[1/5] Resolving CID from CRID...")
+                print(f"    CRID: {crid}")
+                cid = resolve_crid_to_cid(crid, token)
             if not cid:
                 print(f"[!] Could not resolve CID from CRID")
                 sys.exit(1)
