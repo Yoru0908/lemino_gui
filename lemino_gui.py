@@ -295,6 +295,10 @@ if do_download and token and url_input:
             fname += ".mp4"
         out_path = out_dir / fname
         cmd += ["-o", str(out_path)]
+        run_cwd = str(SCRIPT_DIR)
+    else:
+        # No explicit name: set cwd to out_dir so auto-named file lands there
+        run_cwd = str(out_dir)
 
     dl_lines = []
     dl_q: queue.Queue = queue.Queue()
@@ -302,7 +306,7 @@ if do_download and token and url_input:
     t = threading.Thread(
         target=run_subprocess,
         args=(cmd, dl_q),
-        kwargs={"cwd": str(SCRIPT_DIR)},
+        kwargs={"cwd": run_cwd},
         daemon=True,
     )
     t.start()
