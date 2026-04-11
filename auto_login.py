@@ -32,22 +32,58 @@ def load_credentials():
     if CRED_FILE.exists():
         data = json.loads(CRED_FILE.read_text())
         return data.get("email"), data.get("password")
-    return DEFAULT_EMAIL, DEFAULT_PASS
+    return DEFAULT_EMAIL or None, DEFAULT_PASS or None
+
+
+def _wait_for_token(page, max_wait_ms: int = 20000, interval_ms: int = 1000):
+    """Poll localStorage until X-Service-Token appears or timeout."""
+    import time
+    deadline = time.time() + max_wait_ms / 1000
+    keys = ['X-Service-Token', 'x-service-token', 'X-SERVICE-TOKEN']
+    while time.time() < deadline:
+        for k in keys:
+            try:
+                val = page.evaluate(f"localStorage.getItem('{k}')")
+                if val:
+                    return val
+            except Exception:
+                pass
+        time.sleep(interval_ms / 1000)
+    return None
 
 
 def _do_daccount_login(login_page, email: str, password: str):
     """Fill d-account login form (email → next → password → login)."""
-    login_page.wait_for_timeout(3000)
+    from playwright.sync_api import TimeoutError as PwTimeout
 
-    login_page.locator('input[type="text"]').first.fill(email)
-    login_page.locator('text="次へ"').first.click()
+    # Wait for email input to be visible
+    try:
+        login_page.wait_for_selector('input[type="text"], input[type="email"]', timeout=10000)
+    except PwTimeout:
+        print("    [!] Email field not found")
+        return
+
+    login_page.locator('input[type="text"], input[type="email"]').first.fill(email)
+    # Try clicking 次へ by text or by submit button
+    try:
+        login_page.get_by_text("次へ", exact=True).first.click()
+    except Exception:
+        login_page.locator('button[type="submit"], input[type="submit"]').first.click()
     print("    Email entered, clicking next...")
-    login_page.wait_for_timeout(3000)
+
+    # Wait for password field
+    try:
+        login_page.wait_for_selector('input[type="password"]', timeout=10000)
+    except PwTimeout:
+        print("    [!] Password field not found")
+        return
 
     login_page.locator('input[type="password"]').first.fill(password)
-    login_page.locator('text="ログイン"').first.click()
+    try:
+        login_page.get_by_text("ログイン", exact=True).first.click()
+    except Exception:
+        login_page.locator('button[type="submit"], input[type="submit"]').first.click()
     print("    Password entered, logging in...")
-    login_page.wait_for_timeout(8000)
 
 
 def auto_login(email: str, password: str, headless: bool = True) -> str:
@@ -95,12 +131,15 @@ def auto_login(email: str, password: str, headless: bool = True) -> str:
             # Step 3: Click "dアカウントをお持ちの方" to start OAuth
             print("[3/5] Starting OAuth via dアカウントをお持ちの方...")
             try:
-                page.locator('text="dアカウントをお持ちの方"').click()
-            except Exception:
-                pass
+                btn3 = page.get_by_text("dアカウントをお持ちの方")
+                btn3.first.click(timeout=8000)
+            except Exception as e3:
+                print(f"    [!] OAuth button not found: {e3}")
             # Wait for navigation to d-account
-            page.wait_for_load_state("networkidle", timeout=15000)
-            page.wait_for_timeout(2000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except PwTimeout:
+                pass
             print(f"    URL: {page.url[:80]}...")
 
             # Step 4: d-account login
@@ -115,19 +154,9 @@ def auto_login(email: str, password: str, headless: bool = True) -> str:
             except PwTimeout:
                 page.goto("https://lemino.docomo.ne.jp/", wait_until="networkidle", timeout=30000)
 
-            page.wait_for_timeout(5000)
-
-            # Read token
-            token = page.evaluate("localStorage.getItem('X-Service-Token')")
-            if token:
-                print(f"\n[+] SUCCESS! Token: {token[:8]}...")
-                save_token(token)
-                save_credentials(email, password)
-                browser.close()
-                return token
-
-            page.wait_for_timeout(5000)
-            token = page.evaluate("localStorage.getItem('X-Service-Token')")
+            # Poll localStorage for up to 25 seconds
+            print("[5/5] Waiting for token in localStorage...")
+            token = _wait_for_token(page, max_wait_ms=25000)
             if token:
                 print(f"\n[+] SUCCESS! Token: {token[:8]}...")
                 save_token(token)
@@ -136,7 +165,7 @@ def auto_login(email: str, password: str, headless: bool = True) -> str:
                 return token
 
             page.screenshot(path="/tmp/lemino_token_debug.png")
-            print(f"[!] No token. URL: {page.url}")
+            print(f"[!] No token after 25s. URL: {page.url}")
             print(f"    Screenshot: /tmp/lemino_token_debug.png")
             browser.close()
             return None
