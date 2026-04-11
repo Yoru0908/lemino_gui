@@ -21,6 +21,24 @@ SCRIPT_DIR = Path(__file__).parent
 TOKEN_FILE = SCRIPT_DIR / ".token"
 CRED_FILE = SCRIPT_DIR / ".credentials"
 
+
+def pick_folder() -> str | None:
+    """Open native folder picker via tkinter subprocess. Returns path or None."""
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                "import tkinter as tk; from tkinter import filedialog; "
+                "root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', True); "
+                "p = filedialog.askdirectory(); print(p) if p else None",
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        path = result.stdout.strip()
+        return path if path else None
+    except Exception:
+        return None
+
 # ─── Page config ────────────────────────────────────────────
 
 st.set_page_config(
@@ -231,11 +249,26 @@ with dl_col2:
         disabled=(not token),
     )
 with dl_col3:
-    output_dir = st.text_input(
-        "保存到目录",
-        value=str(Path.home() / "Downloads"),
-        disabled=(not token),
-    )
+    if "output_dir" not in st.session_state:
+        st.session_state["output_dir"] = str(Path.home() / "Downloads")
+
+    dir_label_col, dir_btn_col = st.columns([5, 2])
+    with dir_label_col:
+        output_dir = st.text_input(
+            "保存到目录",
+            value=st.session_state["output_dir"],
+            key="output_dir_input",
+            disabled=(not token),
+        )
+        st.session_state["output_dir"] = output_dir
+    with dir_btn_col:
+        st.write("")
+        st.write("")
+        if st.button("📁 浏览", disabled=(not token), use_container_width=True):
+            chosen = pick_folder()
+            if chosen:
+                st.session_state["output_dir"] = chosen
+                st.rerun()
 
 do_download = st.button(
     "▶ 开始下载",
